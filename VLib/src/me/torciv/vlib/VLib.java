@@ -1,6 +1,7 @@
 package me.torciv.vlib;
 
 import me.torciv.vlib.commands.CommandManager;
+import me.torciv.vlib.commands.extra.language.LangType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
@@ -8,14 +9,15 @@ import java.util.ArrayList;
 public class VLib implements IVLib{
 
     private static VLib instance;
+    private JavaPlugin hook;
 
-    public VLib() {
+    public VLib(JavaPlugin hook) {
         instance = this;
+        this.hook = hook;
     }
 
     /**
      * Generate a new CommandManager to register Commands
-     * @param hook
      * @param cmdTag
      * @param perm
      * @param baseCmd
@@ -23,8 +25,8 @@ public class VLib implements IVLib{
      * @return CommandManager
      */
     @Override
-    public CommandManager generateBaseCmd(JavaPlugin hook, String cmdTag, String perm, String baseCmd, String ... aliases){
-        return new CommandManager(hook, cmdTag, perm, baseCmd, aliases);
+    public CommandManager generateBaseCmd(String cmdTag, LangType langType, String perm, String baseCmd, String ... aliases){
+        return new CommandManager(this.hook, langType, cmdTag, perm, baseCmd, aliases);
     }
 
     @Override

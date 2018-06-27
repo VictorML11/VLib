@@ -1,10 +1,13 @@
 package me.torciv.vlib.commands;
 
 import me.torciv.vlib.commands.arguments.AbstractArg;
-import me.torciv.vlib.commands.arguments.types.ArgBoolean;
 import me.torciv.vlib.commands.arguments.types.ArgString;
 import me.torciv.vlib.commands.extra.CommandFinished;
 import me.torciv.vlib.commands.extra.CommandOnly;
+import me.torciv.vlib.commands.extra.language.LangFactory;
+import me.torciv.vlib.commands.extra.language.LangType;
+import me.torciv.vlib.commands.extra.language.Language;
+import me.torciv.vlib.commands.extra.language.debug.Debug;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;
@@ -40,34 +43,23 @@ import java.util.stream.Collectors;
  */
 public class CommandManager implements TabCompleter, CommandExecutor {
 
-    private boolean GLOBAL_DEBUG = false;
-
-    @Cmd(cmd = "debug",
-            args = "[on/off]",
-            argTypes = {ArgBoolean.class},
-            help = "Activa/Desactiva el modo debug.",
-            longhelp = "Activa/Desactiva el modo debug. Muestra información al usar un comando.",
-            only = CommandOnly.OP,
-            permission = "debug")
-    public CommandFinished cmdToggleDebugMode(CommandSender sender, Object[] args) {
-        GLOBAL_DEBUG = (args.length != 0 ? (Boolean) args[0] : !GLOBAL_DEBUG);
-        sender.sendMessage(ChatColor.YELLOW + "Modo Debug: " + (GLOBAL_DEBUG ? ChatColor.GREEN + "ACTIVADO" : ChatColor.RED + "DESACTIVADO"));
-        return CommandFinished.DONE;
-    }
-
-    private static HashMap<Class<? extends AbstractArg<?>>, AbstractArg<?>> argInstances = new HashMap<Class<? extends AbstractArg<?>>, AbstractArg<?>>();
+    private HashMap<Class<? extends AbstractArg<?>>, AbstractArg<?>> argInstances = new HashMap<>();
 
     private ArrayList<Cmd> commands = new ArrayList<>();
-    private ArrayList<Method> commandMethods = new ArrayList<Method>();
+    private ArrayList<Method> commandMethods = new ArrayList<>();
 
-    String tag;
-    String command;
-    String permissionScheme;
+    public static Language language;
+    private Class<?> debugClass; // Debug Class Loaded with cmd
 
-    public CommandManager(JavaPlugin plugin, String tag, String permissionScheme, String command, String... aliases) {
+    private String tag;
+    private String command;
+    private String permissionScheme;
+
+    public CommandManager(JavaPlugin plugin, LangType langType, String tag, String permissionScheme, String command, String... aliases) {
         this.tag = tag;
         this.command = command;
         this.permissionScheme = permissionScheme;
+        this.loadLanguage(langType);
 
         // Used to inject the command without using plugin.yml
         try {
@@ -82,14 +74,23 @@ public class CommandManager implements TabCompleter, CommandExecutor {
             PluginCommand pluginCommand = c.newInstance(command, plugin);
             pluginCommand.setTabCompleter(this);
             pluginCommand.setExecutor(this);
-            if (aliases.length > 0)
+            if (aliases.length > 0) {
                 pluginCommand.setAliases(Arrays.asList(aliases));
+            }
             commandMap.register(command, pluginCommand);
 
-            loadCommandClass(this.getClass());
+            loadCommandClass(this.debugClass);
+
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+
+    private void loadLanguage(LangType langType){
+        language = LangFactory.loadLang(langType);
+        Debug debug = LangFactory.loadDebug(langType);
+        if(debug != null) debugClass = debug.getClas();
     }
 
     /**
@@ -97,11 +98,13 @@ public class CommandManager implements TabCompleter, CommandExecutor {
      */
     public CommandManager loadCommandClass(Class<?> commandClass) {
         try {
-            Arrays.stream(commandClass.getMethods()).filter(method -> method.isAnnotationPresent(Cmd.class)).forEach(method -> {
-                Cmd cmd = method.getAnnotation(Cmd.class);
-                commands.add(cmd);
-                commandMethods.add(method);
-            });
+            for (Method method : commandClass.getMethods()) {
+                if (method.isAnnotationPresent(Cmd.class)) {
+                    Cmd cmd = method.getAnnotation(Cmd.class);
+                    commands.add(cmd);
+                    commandMethods.add(method);
+                }
+            }
         } catch (SecurityException e) {
             e.printStackTrace();
         }
@@ -153,7 +156,7 @@ public class CommandManager implements TabCompleter, CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         StopWatch sw = null;
-        if (GLOBAL_DEBUG) {
+        if (Debug.GLOBAL_DEBUG) {
             sw = new StopWatch();
             sw.start();
         }
@@ -200,7 +203,7 @@ public class CommandManager implements TabCompleter, CommandExecutor {
             }
         }
 
-        if (GLOBAL_DEBUG && sw != null) {
+        if (Debug.GLOBAL_DEBUG && sw != null) {
             sw.stop();
             sender.sendMessage(ChatColor.YELLOW + "Ha tomado " + sw.getTime() + " ms para ejectuar el comando.");
         }
@@ -293,19 +296,19 @@ public class CommandManager implements TabCompleter, CommandExecutor {
                         return CommandFinished.BADCOMMAND.replace(command + " " + bestFit.cmd() + " " + bestFit.args());
 
                     // Run the command :D
-                    return (CommandFinished) commandMethods.get(bestFit_i).invoke(null, new Object[]{sender, (cmdArgsPassed != null ? cmdArgsPassed : null)});
+                    return (CommandFinished) commandMethods.get(bestFit_i).invoke(null, new Object[]{sender, (cmdArgsPassed)});
                 }
             }
         } catch (InvocationTargetException e) {
             e.getCause().printStackTrace();
             if (e.getCause() instanceof CommandException)
                 return CommandFinished.CUSTOM.replace(e.getCause().getMessage());
-            if (GLOBAL_DEBUG)
+            if (Debug.GLOBAL_DEBUG)
                 Bukkit.broadcastMessage(ChatColor.RED + "Error: " + getTrace(e));
             return CommandFinished.EXCEPTION;
         } catch (Exception e) {
             e.printStackTrace();
-            if (GLOBAL_DEBUG)
+            if (Debug.GLOBAL_DEBUG)
                 Bukkit.broadcastMessage(ChatColor.RED + "Error: " + getTrace(e));
             return CommandFinished.EXCEPTION;
         }
@@ -346,7 +349,7 @@ public class CommandManager implements TabCompleter, CommandExecutor {
 
         String cmdLabel = null; // The label of the specific command.
 
-        if (specific && args.length != 1) {
+        if (specific && (args.length != 1)) {
             perPage = 4; // Reduce the amount to show per page.
             cmdLabel = StringUtils.join(args, " ").split(" ", 2)[1]; // Because args = "help <command>" cut out "help".
         }
